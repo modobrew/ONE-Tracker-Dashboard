@@ -11,18 +11,34 @@
 /Users/modobrew/Documents/Claude-Projects-2026/ONE_Tracker/
 ```
 
-### To Run the Dashboard
+### Live App (Streamlit Cloud)
+**URL:** https://one-tracker-dashboard.streamlit.app
+
+**GitHub Repo:** https://github.com/modobrew/ONE-Tracker-Dashboard
+
+Share this URL with teammates - they can upload their own ONE Tracker files.
+
+### To Run Locally
 ```bash
 cd /Users/modobrew/Documents/Claude-Projects-2026/ONE_Tracker
 streamlit run app.py
 ```
 Then open browser to: http://localhost:8501
 
-### To Stop the Dashboard
+### To Stop Local Dashboard
 Press `Ctrl+C` in the terminal, or:
 ```bash
 pkill -f "streamlit run"
 ```
+
+### To Update the Deployed App
+Make changes locally, then:
+```bash
+git add .
+git commit -m "Description of changes"
+git push
+```
+Streamlit Cloud auto-redeploys on push.
 
 ### Current Project Status: MVP COMPLETE
 - Streamlit dashboard is functional
