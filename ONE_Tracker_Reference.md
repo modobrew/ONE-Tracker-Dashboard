@@ -40,11 +40,13 @@ git push
 ```
 Streamlit Cloud auto-redeploys on push.
 
-### Current Project Status: MVP COMPLETE
-- Streamlit dashboard is functional
+### Current Project Status: MVP COMPLETE & DEPLOYED
+- Streamlit dashboard is live and functional
+- Deployed to Streamlit Community Cloud
 - All 4 role views working (Production Manager, Operations Director, QC Manager, Sewing Manager)
 - File upload, month selection, and SS stream filtering working
 - Parent SKU rollup logic implemented and tested
+- GitHub repo connected for easy updates (push to deploy)
 
 ### Key Files
 | File | Purpose |
@@ -54,8 +56,9 @@ Streamlit Cloud auto-redeploys on push.
 | `utils/sku_utils.py` | Parent SKU rollup logic (color code removal) |
 | `utils/metrics.py` | KPI calculations (pass rate, fail rate, etc.) |
 | `requirements.txt` | Python dependencies |
+| `.gitignore` | Git ignore rules (excludes .xlsx data files) |
 | `ONE_Tracker_Reference.md` | This file - project documentation |
-| `ONE_Tracker_JAN26.xlsx` | Sample data file |
+| `ONE_Tracker_JAN26.xlsx` | Sample data file (local only, not in repo) |
 
 ### Important Business Rules (Hardcoded)
 
@@ -81,11 +84,14 @@ BK, CB, MC, MA, MB, MT, RG, WD, WG, TB, TD, TJ, RD, ML, NG, NP, RT
 4. **Added TB** - Was missing from color codes
 
 ### What's Next (Potential Enhancements)
+- Further define dashboard views per job function (user requested)
 - Export functionality (PDF/Excel reports)
 - Date range filtering within months
 - Drill-down into specific SKUs
 - Comparison between time periods
 - Email alerts for threshold breaches
+- Custom thresholds for pass/fail rate alerts
+- Historical trending across multiple ONE Tracker files
 
 ---
 
@@ -217,12 +223,12 @@ Metrics tracked on KPI sheets (by quarter):
 |-----|-------------|-------------|
 | Quality KPI - Pass Rate (Fails) | Overall pass rate | (Total Passed) / (Total Inspected) |
 | Repair Rate (Fixes) | Rate of items needing repair | (Total Repairs) / (Total Inspected) |
-| QC Fail Rate | Rate of fails caught at QC | (Total QC Fails) / (Total Fails) |
+| QC Fail Rate | Rate of fails caught at QC | (Total QC Fails) / (Total Scrap) |
 | Sewn Resale Pass Rate | Pass rate for Bearse products | Bearse passed / Bearse inspected |
 | Sewn Resale (Bearse) Repair Rate | Repair rate for Bearse | Bearse repairs / Bearse inspected |
 | Resale (Non Sewn) Pass Rate | Pass rate for Resale items | Resale passed / Resale inspected |
 | Total SS Products Inspected | Volume metric | Sum of SS Quantity |
-| Total SS Fails | Fail count | Sum of SS QC Fail + Sewing Fail |
+| Total SS Fails | Fail count | Sum of SS Scrap (Fails = Scrap) |
 
 ---
 
@@ -548,14 +554,17 @@ No account required for local development.
 
 ```
 ONE_Tracker/
+├── .git/                         # Git repository
+├── .gitignore                    # Excludes data files from repo
 ├── ONE_Tracker_Reference.md      # This documentation
-├── ONE_Tracker_JAN26.xlsx        # Source data
+├── ONE_Tracker_JAN26.xlsx        # Source data (local only, not in repo)
 ├── app.py                        # Main Streamlit application
-├── utils/
-│   ├── data_loader.py            # Excel parsing, data cleaning
-│   ├── sku_utils.py              # Parent SKU rollup logic
-│   └── metrics.py                # KPI calculations
-└── requirements.txt              # Python dependencies
+├── requirements.txt              # Python dependencies
+└── utils/
+    ├── __init__.py               # Package init
+    ├── data_loader.py            # Excel parsing, data cleaning
+    ├── sku_utils.py              # Parent SKU rollup logic
+    └── metrics.py                # KPI calculations
 ```
 
 ---
