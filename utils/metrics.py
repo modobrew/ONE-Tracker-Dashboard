@@ -7,6 +7,16 @@ import pandas as pd
 from typing import Dict, List, Optional, Tuple
 from .sku_utils import add_parent_sku_column
 
+# Performance Thresholds
+TARGET_FAIL_RATE = 3.0  # Good month <= 3%
+TARGET_REPAIR_RATE = 3.0  # Good month <= 3%
+TARGET_ON_TIME_RATE = 97.0  # Required >= 97%
+MIN_UNITS_FOR_RATE = 10  # Minimum units for rate calculations
+SKU_CONCENTRATION_THRESHOLD = 50.0  # Alert if inspector has > 50% of a SKU
+MIN_SKU_VOLUME_FOR_CONCENTRATION = 10  # Only check SKUs with 10+ orders
+RECURRING_SKU_MIN_APPEARANCES = 3  # Must appear 3+ of last 6 months
+RECURRING_SKU_LOOKBACK_MONTHS = 6
+
 
 def calculate_summary_metrics(df: pd.DataFrame) -> Dict:
     """
@@ -290,3 +300,316 @@ def generate_insights(metrics: Dict, problem_skus: Tuple, inspector_df: pd.DataF
         insights.append(f"🔧 High repair rate of {metrics['repair_rate']:.1f}% - rework overhead concern")
 
     return insights
+
+
+def calculate_on_time_metrics(df: pd.DataFrame) -> Dict:
+    """
+    Calculate on-time delivery metrics.
+
+    Args:
+        df: DataFrame with Due_Date and Finished_Date columns
+
+    Returns:
+        Dictionary with on-time delivery metrics
+    """
+    # Filter to orders with valid Due_Date
+    valid_df = df[df['Due_Date'].notna()].copy()
+    orders_missing_due_date = len(df) - len(valid_df)
+    orders_with_due_date = len(valid_df)
+
+    if orders_with_due_date == 0:
+        return {
+            'on_time_rate': 0.0,
+            'total_late_orders': 0,
+            'total_days_late': 0,
+            'avg_days_late': 0.0,
+            'orders_missing_due_date': orders_missing_due_date,
+            'orders_with_due_date': 0
+        }
+
+    # Calculate days late for each order (negative = early, positive = late)
+    valid_df['Days_Late'] = (valid_df['Finished_Date'] - valid_df['Due_Date']).dt.days
+
+    # Late = Finished > Due (Days_Late > 0)
+    late_orders = valid_df[valid_df['Days_Late'] > 0]
+    total_late_orders = len(late_orders)
+    total_days_late = late_orders['Days_Late'].sum() if not late_orders.empty else 0
+    avg_days_late = late_orders['Days_Late'].mean() if not late_orders.empty else 0.0
+
+    on_time_count = orders_with_due_date - total_late_orders
+    on_time_rate = (on_time_count / orders_with_due_date * 100)
+
+    return {
+        'on_time_rate': round(on_time_rate, 1),
+        'total_late_orders': int(total_late_orders),
+        'total_days_late': int(total_days_late),
+        'avg_days_late': round(avg_days_late, 1),
+        'orders_missing_due_date': int(orders_missing_due_date),
+        'orders_with_due_date': int(orders_with_due_date)
+    }
+
+
+def get_recurring_problem_skus(
+    xlsx,
+    selected_months: List[str],
+    all_monthly_sheets: List[str],
+    lookback: int = 6,
+    top_n: int = 5,
+    min_appearances: int = 3
+) -> pd.DataFrame:
+    """
+    Identify Parent SKUs appearing in top problem list for multiple months.
+
+    Args:
+        xlsx: Excel file object
+        selected_months: Currently selected months
+        all_monthly_sheets: All available monthly sheets
+        lookback: Number of months to look back
+        top_n: Top N problem SKUs per month to consider
+        min_appearances: Minimum appearances to flag as recurring
+
+    Returns:
+        DataFrame with recurring problem SKUs
+    """
+    from .data_loader import get_lookback_months, load_ss_data_from_sheet
+
+    if not selected_months:
+        return pd.DataFrame()
+
+    # Use the most recent selected month as reference
+    sorted_selected = sorted(selected_months, key=lambda x: (int(x[3:]), x[:3]))
+    current_month = sorted_selected[-1]
+
+    # Get lookback window
+    lookback_months = get_lookback_months(all_monthly_sheets, current_month, lookback)
+
+    if not lookback_months:
+        return pd.DataFrame()
+
+    # Track appearances per Parent SKU
+    sku_appearances = {}  # Parent_SKU -> list of months
+
+    for month in lookback_months:
+        try:
+            month_df = load_ss_data_from_sheet(xlsx, month)
+            if month_df.empty:
+                continue
+
+            month_df = add_parent_sku_column(month_df, 'SKU')
+
+            # Aggregate by Parent SKU
+            sku_stats = month_df.groupby('Parent_SKU').agg({
+                'Quantity': 'sum',
+                'Scrap': 'sum'
+            }).reset_index()
+
+            sku_stats['Fail_Rate'] = (sku_stats['Scrap'] / sku_stats['Quantity'] * 100)
+
+            # Get top N by fail count (using Scrap as fail count)
+            top_skus = sku_stats.nlargest(top_n, 'Scrap')['Parent_SKU'].tolist()
+
+            for sku in top_skus:
+                if sku not in sku_appearances:
+                    sku_appearances[sku] = []
+                sku_appearances[sku].append(month)
+
+        except Exception:
+            continue
+
+    # Filter to SKUs appearing in min_appearances or more months
+    recurring = []
+    for sku, months in sku_appearances.items():
+        if len(months) >= min_appearances:
+            recurring.append({
+                'Parent_SKU': sku,
+                'Months_In_Top5': len(months),
+                'Month_List': ', '.join(months)
+            })
+
+    if not recurring:
+        return pd.DataFrame()
+
+    result = pd.DataFrame(recurring)
+    result = result.sort_values('Months_In_Top5', ascending=False)
+
+    return result
+
+
+def get_inspector_sku_concentration(
+    df: pd.DataFrame,
+    min_sku_volume: int = 10,
+    threshold_pct: float = 50.0
+) -> pd.DataFrame:
+    """
+    Identify inspectors with high concentration of a specific Parent SKU.
+
+    Args:
+        df: DataFrame with Inspector and Parent_SKU columns
+        min_sku_volume: Minimum total orders for a SKU to be considered
+        threshold_pct: Concentration percentage to flag (default 50%)
+
+    Returns:
+        DataFrame with concentration alerts
+    """
+    # Inspectors to exclude from concentration alerts:
+    # - BRYCE: QC Manager, intentionally focuses on specific SKUs (BU items)
+    # - PA/SEWING ASST: Handles different product types by design
+    EXCLUDED_INSPECTORS = ['BRYCE', 'PA/SEWING ASST', 'PA/SEWING ASST.']
+
+    df = add_parent_sku_column(df, 'SKU')
+
+    # Get total orders per Parent SKU
+    sku_totals = df.groupby('Parent_SKU')['Order_Number'].nunique().reset_index()
+    sku_totals.columns = ['Parent_SKU', 'Total_SKU_Orders']
+
+    # Filter to SKUs with sufficient volume
+    valid_skus = sku_totals[sku_totals['Total_SKU_Orders'] >= min_sku_volume]['Parent_SKU'].tolist()
+
+    if not valid_skus:
+        return pd.DataFrame()
+
+    # For each valid SKU, calculate inspector distribution
+    alerts = []
+    df_filtered = df[df['Parent_SKU'].isin(valid_skus)]
+
+    for sku in valid_skus:
+        sku_df = df_filtered[df_filtered['Parent_SKU'] == sku]
+        total_orders = sku_df['Order_Number'].nunique()
+
+        inspector_orders = sku_df.groupby('Inspector')['Order_Number'].nunique().reset_index()
+        inspector_orders.columns = ['Inspector', 'Inspector_SKU_Orders']
+
+        for _, row in inspector_orders.iterrows():
+            # Skip excluded inspectors
+            inspector_upper = row['Inspector'].upper().strip()
+            if any(excl.upper() in inspector_upper for excl in EXCLUDED_INSPECTORS):
+                continue
+
+            concentration_pct = (row['Inspector_SKU_Orders'] / total_orders * 100)
+            if concentration_pct > threshold_pct:
+                alerts.append({
+                    'Inspector': row['Inspector'],
+                    'Parent_SKU': sku,
+                    'Inspector_SKU_Orders': row['Inspector_SKU_Orders'],
+                    'Total_SKU_Orders': total_orders,
+                    'Concentration_Pct': round(concentration_pct, 1),
+                    'Alert': True
+                })
+
+    if not alerts:
+        return pd.DataFrame()
+
+    result = pd.DataFrame(alerts)
+    result = result.sort_values('Concentration_Pct', ascending=False)
+
+    return result
+
+
+def filter_active_inspectors(df: pd.DataFrame, selected_months: List[str]) -> List[str]:
+    """
+    Get inspectors present in the most recent selected month.
+
+    Args:
+        df: DataFrame with Inspector and Month columns
+        selected_months: List of selected month sheet names
+
+    Returns:
+        List of active inspector names
+    """
+    if not selected_months or df.empty:
+        return []
+
+    # Sort months to find most recent
+    from .data_loader import parse_month_string
+    sorted_months = sorted(selected_months, key=parse_month_string)
+    most_recent = sorted_months[-1]
+
+    # Get unique inspectors from most recent month
+    recent_df = df[df['Month'] == most_recent]
+    active_inspectors = recent_df['Inspector'].unique().tolist()
+
+    return active_inspectors
+
+
+def get_monthly_trends_extended(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Calculate extended monthly trend metrics including NCRs and touch rate.
+
+    Args:
+        df: DataFrame with SS stream data (must have 'Month' column)
+
+    Returns:
+        DataFrame with extended monthly metrics
+    """
+    # Define month order for sorting
+    month_order = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN',
+                   'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC']
+
+    monthly_stats = df.groupby('Month').agg({
+        'Quantity': 'sum',
+        'Final_Qty': 'sum',
+        'Repairs': 'sum',
+        'Scrap': 'sum',
+        'QC_Fail': 'sum',
+        'Sewing_Fail': 'sum',
+        'Order_Number': 'nunique',
+        'Red_Flag': lambda x: (x == 'X').sum(),
+        'NCR_Complete': lambda x: (x == 'X').sum()
+    }).reset_index()
+
+    monthly_stats.columns = ['Month', 'Quantity', 'Final_Qty', 'Repairs', 'Scrap',
+                              'QC_Fail', 'Sewing_Fail', 'Orders', 'Red_Flags', 'NCR_Count']
+
+    # Calculate rates
+    monthly_stats['Pass_Rate'] = (monthly_stats['Final_Qty'] / monthly_stats['Quantity'] * 100).round(2)
+    monthly_stats['Fail_Rate'] = (monthly_stats['Scrap'] / monthly_stats['Quantity'] * 100).round(2)
+    monthly_stats['Repair_Rate'] = (monthly_stats['Repairs'] / monthly_stats['Quantity'] * 100).round(2)
+    monthly_stats['Total_Fails'] = monthly_stats['Scrap']
+    monthly_stats['Total_Reworks'] = monthly_stats['Repairs']
+
+    # Touch Rate = (Repairs + Scrap) / Quantity * 100
+    monthly_stats['Touch_Rate'] = (
+        (monthly_stats['Repairs'] + monthly_stats['Scrap']) / monthly_stats['Quantity'] * 100
+    ).round(2)
+
+    # Sort by month/year
+    def month_sort_key(month_str):
+        month = month_str[:3]
+        year = int(month_str[3:])
+        month_num = month_order.index(month) if month in month_order else 0
+        return (year, month_num)
+
+    monthly_stats['sort_key'] = monthly_stats['Month'].apply(month_sort_key)
+    monthly_stats = monthly_stats.sort_values('sort_key').drop('sort_key', axis=1)
+
+    return monthly_stats
+
+
+def get_repairs_by_parent_sku(df: pd.DataFrame, top_n: int = 10) -> pd.DataFrame:
+    """
+    Get repair metrics aggregated by Parent SKU.
+
+    Args:
+        df: DataFrame with SS stream data
+        top_n: Number of top SKUs to return
+
+    Returns:
+        DataFrame with repair metrics by Parent SKU
+    """
+    df = add_parent_sku_column(df, 'SKU')
+
+    sku_stats = df.groupby('Parent_SKU').agg({
+        'Quantity': 'sum',
+        'Repairs': 'sum',
+        'Scrap': 'sum',
+        'Sewing_Fail': 'sum',
+        'QC_Fail': 'sum'
+    }).reset_index()
+
+    sku_stats['Repair_Rate'] = (sku_stats['Repairs'] / sku_stats['Quantity'] * 100).round(2)
+    sku_stats['Fail_Rate'] = (sku_stats['Scrap'] / sku_stats['Quantity'] * 100).round(2)
+
+    # Sort by repairs (descending)
+    sku_stats = sku_stats.sort_values('Repairs', ascending=False)
+
+    return sku_stats.head(top_n)

@@ -5,6 +5,7 @@ Handles Excel parsing and data extraction
 
 import pandas as pd
 from typing import Dict, List, Optional, Tuple
+from datetime import datetime
 
 
 # Column mapping for SS table (columns 0-17)
@@ -153,3 +154,124 @@ def load_excel_file(file) -> Tuple[pd.ExcelFile, List[str]]:
     xlsx = pd.ExcelFile(file)
     monthly_sheets = get_monthly_sheets(xlsx)
     return xlsx, monthly_sheets
+
+
+# Month name to number mapping
+MONTH_MAP = {
+    'JAN': 1, 'FEB': 2, 'MAR': 3, 'APR': 4, 'MAY': 5, 'JUN': 6,
+    'JUL': 7, 'AUG': 8, 'SEP': 9, 'OCT': 10, 'NOV': 11, 'DEC': 12
+}
+
+MONTH_NAMES = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN',
+               'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC']
+
+
+def parse_month_string(month_str: str) -> Tuple[int, int]:
+    """
+    Convert month string (e.g., 'JAN26') to (year, month_num) tuple.
+
+    Args:
+        month_str: Month string in MMMYY format (e.g., 'JAN26')
+
+    Returns:
+        Tuple of (full_year, month_number) e.g., (2026, 1)
+    """
+    month_abbr = month_str[:3].upper()
+    year_suffix = int(month_str[3:])
+    # Assume 2000s for two-digit years
+    full_year = 2000 + year_suffix
+    month_num = MONTH_MAP.get(month_abbr, 1)
+    return (full_year, month_num)
+
+
+def get_lookback_months(monthly_sheets: List[str], current_month: str, lookback: int = 6) -> List[str]:
+    """
+    Get the N months before and including current month from available sheets.
+
+    Args:
+        monthly_sheets: List of available month sheet names
+        current_month: Current month to look back from (e.g., 'JAN26')
+        lookback: Number of months to look back (default 6)
+
+    Returns:
+        List of month sheet names in chronological order
+    """
+    if not monthly_sheets or current_month not in monthly_sheets:
+        return []
+
+    # Sort sheets chronologically
+    sorted_sheets = sorted(monthly_sheets, key=parse_month_string)
+
+    # Find index of current month
+    try:
+        current_idx = sorted_sheets.index(current_month)
+    except ValueError:
+        return []
+
+    # Get lookback window (from start_idx to current_idx inclusive)
+    start_idx = max(0, current_idx - lookback + 1)
+    return sorted_sheets[start_idx:current_idx + 1]
+
+
+def generate_month_presets(monthly_sheets: List[str]) -> Dict[str, List[str]]:
+    """
+    Generate preset month selections for UI (quarters and YTD).
+
+    Args:
+        monthly_sheets: List of available month sheet names
+
+    Returns:
+        Dictionary mapping preset names to lists of months
+        e.g., {'Q1 2025': ['JAN25', 'FEB25', 'MAR25'], 'YTD 2026': ['JAN26', 'FEB26'], ...}
+    """
+    if not monthly_sheets:
+        return {}
+
+    presets = {}
+
+    # Sort sheets chronologically
+    sorted_sheets = sorted(monthly_sheets, key=parse_month_string)
+
+    # Group by year
+    sheets_by_year = {}
+    for sheet in sorted_sheets:
+        year, month = parse_month_string(sheet)
+        if year not in sheets_by_year:
+            sheets_by_year[year] = []
+        sheets_by_year[year].append((month, sheet))
+
+    # Current date for YTD calculation
+    current_year = datetime.now().year
+    current_month = datetime.now().month
+
+    # Generate presets for each year
+    for year in sorted(sheets_by_year.keys()):
+        year_sheets = sheets_by_year[year]
+        year_suffix = str(year)[-2:]
+
+        # Quarter definitions
+        quarters = {
+            'Q1': [1, 2, 3],
+            'Q2': [4, 5, 6],
+            'Q3': [7, 8, 9],
+            'Q4': [10, 11, 12]
+        }
+
+        # Generate quarter presets
+        for q_name, q_months in quarters.items():
+            q_sheets = [sheet for month_num, sheet in year_sheets if month_num in q_months]
+            if q_sheets:
+                presets[f"{q_name} {year}"] = q_sheets
+
+        # Generate YTD preset
+        if year == current_year:
+            # Current year: Jan through current month
+            ytd_sheets = [sheet for month_num, sheet in year_sheets if month_num <= current_month]
+        else:
+            # Past years: full year if complete, otherwise whatever is available
+            ytd_sheets = [sheet for _, sheet in year_sheets]
+
+        if ytd_sheets:
+            presets[f"YTD {year}"] = ytd_sheets
+
+    return presets

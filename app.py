@@ -10,7 +10,13 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from utils.data_loader import load_excel_file, load_all_ss_data, get_monthly_sheets
+from utils.data_loader import (
+    load_excel_file,
+    load_all_ss_data,
+    get_monthly_sheets,
+    generate_month_presets,
+    get_lookback_months
+)
 from utils.metrics import (
     calculate_summary_metrics,
     get_problem_skus,
@@ -18,7 +24,14 @@ from utils.metrics import (
     get_inspector_performance,
     get_monthly_trends,
     get_red_flag_analysis,
-    generate_insights
+    generate_insights,
+    calculate_on_time_metrics,
+    get_recurring_problem_skus,
+    get_inspector_sku_concentration,
+    filter_active_inspectors,
+    get_monthly_trends_extended,
+    get_repairs_by_parent_sku,
+    TARGET_ON_TIME_RATE
 )
 from utils.sku_utils import add_parent_sku_column
 
@@ -116,10 +129,31 @@ def main():
             # Month selector in sidebar
             with st.sidebar:
                 st.subheader("📅 Select Months")
+
+                # Generate presets
+                presets = generate_month_presets(monthly_sheets)
+
+                # Preset selector
+                preset_options = ["Custom (Manual Selection)"] + list(presets.keys())
+                selected_preset = st.selectbox(
+                    "Quick Select",
+                    options=preset_options,
+                    index=0,
+                    help="Choose a preset or select Custom for manual selection"
+                )
+
+                # Determine default months based on preset
+                if selected_preset == "Custom (Manual Selection)":
+                    default_months = monthly_sheets[-1:] if monthly_sheets else []
+                else:
+                    default_months = presets.get(selected_preset, [])
+                    # Filter to only months that exist in the file
+                    default_months = [m for m in default_months if m in monthly_sheets]
+
                 selected_months = st.multiselect(
                     "Months to analyze",
                     options=monthly_sheets,
-                    default=monthly_sheets[-1:] if monthly_sheets else [],  # Default to most recent
+                    default=default_months,
                     help="Select one or more months to include in analysis"
                 )
 
@@ -145,6 +179,14 @@ def main():
     inspector_perf = get_inspector_performance(df)
     red_flag_analysis = get_red_flag_analysis(df)
     insights = generate_insights(metrics, (problem_skus_by_count, problem_skus_by_rate), inspector_perf)
+
+    # New metrics
+    on_time_metrics = calculate_on_time_metrics(df)
+    recurring_skus = get_recurring_problem_skus(xlsx, selected_months, monthly_sheets)
+    sku_concentration = get_inspector_sku_concentration(df)
+    active_inspectors = filter_active_inspectors(df, selected_months)
+    repairs_by_sku = get_repairs_by_parent_sku(df)
+    monthly_trends_ext = get_monthly_trends_extended(df)
 
     # Display based on role
     st.markdown(f"### 📋 {role} View")
@@ -211,13 +253,16 @@ def main():
     # Role-specific content
     if role == "Production Manager":
         render_production_manager_view(df, metrics, problem_skus_by_count, problem_skus_by_rate,
-                                        top_repair_skus, inspector_perf, insights)
+                                        top_repair_skus, inspector_perf, insights, on_time_metrics)
     elif role == "Operations Director":
-        render_operations_director_view(df, metrics, problem_skus_by_count, insights, red_flag_analysis)
+        render_operations_director_view(df, metrics, problem_skus_by_count, insights,
+                                         red_flag_analysis, monthly_trends_ext, sku_concentration)
     elif role == "QC Manager":
-        render_qc_manager_view(df, metrics, inspector_perf, red_flag_analysis, insights)
+        render_qc_manager_view(df, metrics, inspector_perf, red_flag_analysis, insights,
+                                sku_concentration, active_inspectors)
     elif role == "Sewing Manager":
-        render_sewing_manager_view(df, metrics, problem_skus_by_count, insights)
+        render_sewing_manager_view(df, metrics, problem_skus_by_count, insights,
+                                    recurring_skus, repairs_by_sku)
 
     # Monthly trends (if multiple months selected)
     if len(selected_months) > 1:
@@ -228,11 +273,47 @@ def main():
 
 
 def render_production_manager_view(df, metrics, problem_by_count, problem_by_rate,
-                                    top_repairs, inspector_perf, insights):
+                                    top_repairs, inspector_perf, insights, on_time_metrics):
     """Render Production Manager dashboard view."""
+
+    # On-Time Delivery Section
+    st.markdown("#### 📦 On-Time Delivery")
+    col1, col2, col3, col4 = st.columns(4)
+
+    with col1:
+        # Color based on target (97%)
+        rate_color = "normal" if on_time_metrics['on_time_rate'] >= TARGET_ON_TIME_RATE else "inverse"
+        st.metric(
+            label="On-Time Rate",
+            value=f"{on_time_metrics['on_time_rate']:.1f}%",
+            delta=f"Target: {TARGET_ON_TIME_RATE}%" if on_time_metrics['on_time_rate'] >= TARGET_ON_TIME_RATE else f"Below {TARGET_ON_TIME_RATE}% target",
+            delta_color=rate_color
+        )
+
+    with col2:
+        st.metric(label="Late Orders", value=f"{on_time_metrics['total_late_orders']:,}")
+
+    with col3:
+        st.metric(label="Total Days Late", value=f"{on_time_metrics['total_days_late']:,}")
+
+    with col4:
+        st.metric(label="Avg Days Late", value=f"{on_time_metrics['avg_days_late']:.1f}")
+
+    # Data quality warning
+    if on_time_metrics['orders_missing_due_date'] > 0:
+        st.warning(f"⚠️ {on_time_metrics['orders_missing_due_date']} orders excluded from on-time calculation (missing Due Date)")
+
+    st.markdown("---")
 
     # Insights section
     st.markdown("#### 💡 Key Insights")
+
+    # Add on-time insight
+    if on_time_metrics['on_time_rate'] >= TARGET_ON_TIME_RATE:
+        st.markdown(f"- ✅ On-time delivery at {on_time_metrics['on_time_rate']:.1f}% - meeting target")
+    else:
+        st.markdown(f"- 🔴 On-time delivery at {on_time_metrics['on_time_rate']:.1f}% - below {TARGET_ON_TIME_RATE}% target")
+
     for insight in insights:
         st.markdown(f"- {insight}")
 
@@ -284,15 +365,48 @@ def render_production_manager_view(df, metrics, problem_by_count, problem_by_rat
             st.info("No data available")
 
 
-def render_operations_director_view(df, metrics, problem_by_count, insights, red_flags):
+def render_operations_director_view(df, metrics, problem_by_count, insights, red_flags,
+                                      monthly_trends_ext, sku_concentration):
     """Render Operations Director dashboard view."""
 
     # High-level insights
     st.markdown("#### 💡 Executive Summary")
+
+    # Touch rate insight
+    if not monthly_trends_ext.empty:
+        avg_touch_rate = monthly_trends_ext['Touch_Rate'].mean()
+        st.markdown(f"- 📈 Average touch rate is {avg_touch_rate:.1f}% (repairs + scrap) - proxy for COPQ labor drag")
+
     for insight in insights:
         st.markdown(f"- {insight}")
 
     st.markdown("---")
+
+    # Month-over-Month Trends (if multiple months)
+    if len(monthly_trends_ext) > 1:
+        st.markdown("#### 📊 Month-over-Month Trends")
+        col1, col2 = st.columns(2)
+
+        with col1:
+            # NCRs trend
+            fig = px.line(monthly_trends_ext, x='Month', y='NCR_Count',
+                          markers=True, title='NCRs by Month')
+            fig.update_layout(height=300, yaxis_title='NCR Count', xaxis_title='Month')
+            fig.update_traces(line_color='#dc3545')
+            st.plotly_chart(fig, use_container_width=True)
+
+        with col2:
+            # Fails and Reworks trend
+            fig = go.Figure()
+            fig.add_trace(go.Bar(x=monthly_trends_ext['Month'], y=monthly_trends_ext['Total_Fails'],
+                                  name='Total Fails', marker_color='#dc3545'))
+            fig.add_trace(go.Bar(x=monthly_trends_ext['Month'], y=monthly_trends_ext['Total_Reworks'],
+                                  name='Reworks', marker_color='#ffc107'))
+            fig.update_layout(barmode='group', title='Fails & Reworks by Month',
+                              height=300, yaxis_title='Count', xaxis_title='Month')
+            st.plotly_chart(fig, use_container_width=True)
+
+        st.markdown("---")
 
     col1, col2 = st.columns(2)
 
@@ -325,41 +439,88 @@ def render_operations_director_view(df, metrics, problem_by_count, insights, red
         display_df.columns = ['Parent SKU', 'Volume', 'Fails', 'Fail Rate %', 'Repairs']
         st.dataframe(display_df, use_container_width=True, hide_index=True)
 
+    # Only show inspector concentration if there are alerts
+    if not sku_concentration.empty:
+        st.markdown("---")
+        st.markdown("#### 👥 Inspector SKU Concentration Alerts")
+        st.info("Flagged inspectors have >50% of a Parent SKU's volume (potential workload imbalance)")
+        display_df = sku_concentration[['Inspector', 'Parent_SKU', 'Concentration_Pct',
+                                         'Inspector_SKU_Orders', 'Total_SKU_Orders']].copy()
+        display_df.columns = ['Inspector', 'Parent SKU', 'Concentration %',
+                              'Inspector Orders', 'Total SKU Orders']
+        st.dataframe(display_df, use_container_width=True, hide_index=True)
 
-def render_qc_manager_view(df, metrics, inspector_perf, red_flags, insights):
+
+def render_qc_manager_view(df, metrics, inspector_perf, red_flags, insights,
+                            sku_concentration, active_inspectors):
     """Render QC Manager dashboard view."""
 
     st.markdown("#### 💡 Key Insights")
     for insight in insights:
         st.markdown(f"- {insight}")
 
-    st.markdown("---")
-
-    # Inspector performance details
-    st.markdown("#### 👥 Inspector Performance Details")
-    if not inspector_perf.empty:
-        display_df = inspector_perf[[
-            'Inspector', 'Quantity', 'Pass_Rate', 'Total_Fails',
-            'QC_Fail', 'Sewing_Fail', 'Repairs', 'Red_Flags'
-        ]].copy()
-        display_df.columns = [
-            'Inspector', 'Qty Inspected', 'Pass Rate %', 'Total Fails',
-            'QC Fails', 'Sewing Fails', 'Repairs', 'Red Flags'
-        ]
+    # SKU Concentration Alerts
+    if not sku_concentration.empty:
+        st.markdown("---")
+        st.markdown("#### ⚠️ SKU Distribution Alerts")
+        st.warning("The following inspectors have >50% of a Parent SKU's volume:")
+        display_df = sku_concentration[['Inspector', 'Parent_SKU', 'Concentration_Pct',
+                                         'Inspector_SKU_Orders', 'Total_SKU_Orders']].copy()
+        display_df.columns = ['Inspector', 'Parent SKU', 'Concentration %',
+                              'Inspector Orders', 'Total SKU Orders']
         st.dataframe(display_df, use_container_width=True, hide_index=True)
 
-        # Inspector comparison chart
-        st.markdown("#### 📊 Inspector Volume Comparison")
-        fig = px.bar(
-            inspector_perf,
-            x='Inspector',
-            y='Quantity',
-            color='Pass_Rate',
-            color_continuous_scale='RdYlGn',
-            labels={'Quantity': 'Products Inspected', 'Pass_Rate': 'Pass Rate %'}
-        )
-        fig.update_layout(height=400)
-        st.plotly_chart(fig, use_container_width=True)
+    st.markdown("---")
+
+    # Separate PA/SEWING ASST from comparison
+    if not inspector_perf.empty:
+        # Identify PA/SEWING ASST entries
+        pa_mask = inspector_perf['Inspector'].str.contains('PA/SEWING', case=False, na=False)
+        pa_data = inspector_perf[pa_mask].copy()
+        comparison_data = inspector_perf[~pa_mask].copy()
+
+        # Filter to active inspectors only (exclude former employees)
+        if active_inspectors:
+            comparison_data = comparison_data[comparison_data['Inspector'].isin(active_inspectors)]
+
+        # Inspector performance comparison
+        st.markdown("#### 👥 Inspector Performance Comparison")
+        st.caption("Excludes PA/SEWING ASST (handles different work type) and former employees")
+
+        if not comparison_data.empty:
+            display_df = comparison_data[[
+                'Inspector', 'Quantity', 'Pass_Rate', 'Total_Fails',
+                'QC_Fail', 'Sewing_Fail', 'Repairs', 'Red_Flags'
+            ]].copy()
+            display_df.columns = [
+                'Inspector', 'Qty Inspected', 'Pass Rate %', 'Total Fails',
+                'QC Fails', 'Sewing Fails', 'Repairs', 'Red Flags'
+            ]
+            st.dataframe(display_df, use_container_width=True, hide_index=True)
+
+            # Inspector comparison chart
+            st.markdown("#### 📊 Inspector Volume Comparison")
+            fig = px.bar(
+                comparison_data,
+                x='Inspector',
+                y='Quantity',
+                color='Pass_Rate',
+                color_continuous_scale='RdYlGn',
+                labels={'Quantity': 'Products Inspected', 'Pass_Rate': 'Pass Rate %'}
+            )
+            fig.update_layout(height=400)
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("No inspector comparison data available")
+
+        # Show PA/SEWING ASST volume separately
+        if not pa_data.empty:
+            st.markdown("---")
+            st.markdown("#### 📦 PA/SEWING ASST Volume (Reference Only)")
+            st.caption("Handles simpler packaging work - not included in performance comparison")
+            pa_display = pa_data[['Inspector', 'Quantity', 'Repairs']].copy()
+            pa_display.columns = ['Role', 'Qty Inspected', 'Repairs']
+            st.dataframe(pa_display, use_container_width=True, hide_index=True)
 
     st.markdown("---")
 
@@ -385,7 +546,8 @@ def render_qc_manager_view(df, metrics, inspector_perf, red_flags, insights):
         st.caption("Higher is better - defects caught earlier save time")
 
 
-def render_sewing_manager_view(df, metrics, problem_by_count, insights):
+def render_sewing_manager_view(df, metrics, problem_by_count, insights,
+                                recurring_skus, repairs_by_sku):
     """Render Sewing Manager dashboard view."""
 
     # Sewing-specific metrics
@@ -409,7 +571,7 @@ def render_sewing_manager_view(df, metrics, problem_by_count, insights):
         st.metric(
             label="Sewing Detection Rate",
             value=f"{metrics['sewing_detection_rate']:.1f}%",
-            help="% of defects caught at sewing"
+            help="% of defects caught at sewing (higher = better early detection)"
         )
 
     st.markdown("---")
@@ -422,25 +584,55 @@ def render_sewing_manager_view(df, metrics, problem_by_count, insights):
 
     st.markdown("---")
 
-    # SKUs with sewing issues
-    st.markdown("#### 🔴 SKUs with Sewing Issues")
-    df_with_parent = add_parent_sku_column(df, 'SKU')
+    # Recurring Problem SKUs (6-month analysis)
+    st.markdown("#### 🔄 Recurring Problem SKUs (6-Month Analysis)")
+    st.caption("Parent SKUs appearing in top 5 problem list for 3+ of the last 6 months")
 
-    sewing_issues = df_with_parent.groupby('Parent_SKU').agg({
-        'Quantity': 'sum',
-        'Sewing_Fail': 'sum',
-        'QC_Fail': 'sum'
-    }).reset_index()
-
-    sewing_issues['Sewing_Fail_Rate'] = (sewing_issues['Sewing_Fail'] / sewing_issues['Quantity'] * 100).round(2)
-    sewing_issues = sewing_issues[sewing_issues['Sewing_Fail'] > 0].sort_values('Sewing_Fail', ascending=False)
-
-    if not sewing_issues.empty:
-        display_df = sewing_issues.head(10)[['Parent_SKU', 'Quantity', 'Sewing_Fail', 'Sewing_Fail_Rate', 'QC_Fail']].copy()
-        display_df.columns = ['Parent SKU', 'Qty Inspected', 'Sewing Fails', 'Sewing Fail Rate %', 'QC Fails (escaped)']
+    if not recurring_skus.empty:
+        display_df = recurring_skus[['Parent_SKU', 'Months_In_Top5', 'Month_List']].copy()
+        display_df.columns = ['Parent SKU', 'Months in Top 5', 'Months']
         st.dataframe(display_df, use_container_width=True, hide_index=True)
+        st.info("These SKUs may need: operator retraining, updated work instructions, or R&D design review")
     else:
-        st.success("No sewing fails recorded!")
+        st.success("No recurring problem SKUs detected in the last 6 months!")
+
+    st.markdown("---")
+
+    # Two-column layout for sewing issues and repairs
+    col1, col2 = st.columns(2)
+
+    with col1:
+        # SKUs with sewing issues
+        st.markdown("#### 🔴 Top SKUs by Sewing Fails")
+        df_with_parent = add_parent_sku_column(df, 'SKU')
+
+        sewing_issues = df_with_parent.groupby('Parent_SKU').agg({
+            'Quantity': 'sum',
+            'Sewing_Fail': 'sum',
+            'QC_Fail': 'sum'
+        }).reset_index()
+
+        sewing_issues['Sewing_Fail_Rate'] = (sewing_issues['Sewing_Fail'] / sewing_issues['Quantity'] * 100).round(2)
+        sewing_issues = sewing_issues[sewing_issues['Sewing_Fail'] > 0].sort_values('Sewing_Fail', ascending=False)
+
+        if not sewing_issues.empty:
+            display_df = sewing_issues.head(10)[['Parent_SKU', 'Quantity', 'Sewing_Fail', 'Sewing_Fail_Rate']].copy()
+            display_df.columns = ['Parent SKU', 'Qty Inspected', 'Sewing Fails', 'Sewing Fail Rate %']
+            st.dataframe(display_df, use_container_width=True, hide_index=True)
+        else:
+            st.success("No sewing fails recorded!")
+
+    with col2:
+        # Repairs by Parent SKU
+        st.markdown("#### 🔧 Top SKUs by Repairs")
+        st.caption("Repairs = sewing team rework (unplanned downtime)")
+
+        if not repairs_by_sku.empty:
+            display_df = repairs_by_sku[['Parent_SKU', 'Quantity', 'Repairs', 'Repair_Rate']].copy()
+            display_df.columns = ['Parent SKU', 'Qty Inspected', 'Repairs', 'Repair Rate %']
+            st.dataframe(display_df, use_container_width=True, hide_index=True)
+        else:
+            st.info("No repair data available")
 
 
 def render_trend_charts(monthly_df):

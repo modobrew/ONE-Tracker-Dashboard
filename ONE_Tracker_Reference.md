@@ -58,6 +58,7 @@ Streamlit Cloud auto-redeploys on push.
 | `requirements.txt` | Python dependencies |
 | `.gitignore` | Git ignore rules (excludes .xlsx data files) |
 | `ONE_Tracker_Reference.md` | This file - project documentation |
+| `Roles.md` | Role-based output spec (KPIs, tables, insights per role) |
 | `ONE_Tracker_JAN26.xlsx` | Sample data file (local only, not in repo) |
 
 ### Important Business Rules (Hardcoded)
@@ -83,15 +84,21 @@ BK, CB, MC, MA, MB, MT, RG, WD, WG, TB, TD, TJ, RD, ML, NG, NP, RT
 3. **False color codes removed** - Removed TN, GR, NV, BL, GY, WT (were never valid)
 4. **Added TB** - Was missing from color codes
 
-### What's Next (Potential Enhancements)
-- Further define dashboard views per job function (user requested)
+### What's Next (Priority Enhancements)
+- On-time delivery metrics (Due Date vs Finished) for Production Manager
+- Recurring problem SKU detection (6-month lookback)
+- Inspector SKU distribution alerts (>50% concentration)
+- Month-over-month trends (NCRs, fails, reworks)
+- Repairs by Parent SKU for Sewing Manager
+- Refined role-based views per Feb 2026 requirements
+
+### Future Enhancements (Lower Priority)
 - Export functionality (PDF/Excel reports)
 - Date range filtering within months
 - Drill-down into specific SKUs
-- Comparison between time periods
 - Email alerts for threshold breaches
-- Custom thresholds for pass/fail rate alerts
-- Historical trending across multiple ONE Tracker files
+- Cost of quality analysis (requires separate cost data)
+- Sewing operator cross-reference (requires additional data source)
 
 ---
 
@@ -99,7 +106,7 @@ BK, CB, MC, MA, MB, MT, RG, WD, WG, TB, TD, TJ, RD, ML, NG, NP, RT
 
 The ONE Tracker is a QC Department tool used to track production orders completed through Quality Control. It monitors finished good SKUs, defects (sewing fails, QC fails), total output, scrap, and inspector performance.
 
-**Primary Focus: SS Stream** (In-house production) - Bearse and Resale streams are secondary.
+**Primary Focus: SS Stream ONLY** (In-house production) - Dashboard excludes Bearse and Resale streams.
 
 ---
 
@@ -593,3 +600,201 @@ ONE_Tracker/
 - [ ] Export functionality (PDF/Excel)
 - [x] Basic styling
 - [x] Multi-month comparison (when multiple months selected)
+
+---
+
+## Dashboard Enhancement Requirements (Feb 2026 Session)
+
+This section captures requirements gathered from stakeholder discussion for improving role-based dashboard views.
+
+### Dashboard Focus
+
+**SS Stream Only** - Dashboard focuses exclusively on in-house production (SS Stream). Bearse and Resale streams are not displayed.
+
+---
+
+### Performance Targets & Thresholds
+
+| Metric | Target | Notes |
+|--------|--------|-------|
+| Fail Rate | ≤3% | Good month |
+| Repair Rate | ≤3% | Good month |
+| On-Time Delivery | ≥97% | Anything below is unacceptable |
+| Min Units for Rate Tables | 10 | Prevent misleading rates from small samples |
+
+**Color Coding:**
+- Green = Pass / Good performance
+- Red = Fail / Needs attention
+
+---
+
+### On-Time Delivery Metrics (NEW)
+
+**Calculation:** Compare `Finished` date to `Due Date`
+- Late = `Finished > Due Date` (no grace period)
+- On-Time = `Finished <= Due Date`
+
+**Metrics to Display:**
+- On-Time Rate % = (On-Time Orders / Total Orders) × 100
+- Total Late Orders (count)
+- Total Days Late (sum of all late days)
+- Average Days Late (Total Days Late / Late Orders)
+
+**Purpose:** Production Manager uses this to challenge the team to improve each month.
+
+---
+
+### Multi-Month Analysis
+
+**File Structure:** ONE Tracker contains multiple monthly sheets (JAN25, FEB25, ... JAN26, etc.)
+
+**Recurring Problem SKU Detection:**
+- Look back 6 months from the currently selected month
+- Example: If viewing JAN26, analyze AUG25 through JAN26
+- Use Parent SKU level (color has no bearing on construction)
+- Flag SKUs that appear in top problem list for multiple months
+
+---
+
+### Inspector Analysis Rules
+
+**PA/SEWING ASST:**
+- Catch-all category for simpler packaging work (not full QC inspection)
+- Consider excluding from inspector performance comparisons, or note they handle different work
+
+**Former Employees:**
+- Some inspector names may appear in historical data but not recent months
+- These are former employees no longer with the company
+
+**SKU Distribution Alert:**
+- Flag if any inspector receives >50% of a specific Parent SKU
+- Indicates uneven workload distribution
+- Only meaningful with sufficient volume (suggest 20+ units of that Parent SKU)
+
+---
+
+### Role-Specific Requirements
+
+#### Production Manager
+**Usage Frequency:** Most frequent user (daily, weekly, or monthly)
+
+**Key Responsibilities:**
+- Works with Sewing Manager on getting reworks and fails under control
+- Ranks SKUs that need to be addressed with more training, better instructions, or R&D design changes
+- Monitors on-time delivery and challenges team to improve
+
+**Key Metrics Needed:**
+- On-time delivery rate and late order details
+- Top problem SKUs (by fail count and fail rate)
+- Fail rate, repair rate, scrap rate
+- % of fails caught at sewing (inline detection)
+
+---
+
+#### Sewing Manager
+**Focus:** Product-level issues, NOT inspector-level
+
+**Key Responsibilities:**
+- Identifies which products are causing the most issues in sewing
+- Uses data to determine if products need: retraining, updated work instructions, or R&D design review
+
+**Key Metrics Needed:**
+- Recurring problem SKUs (appearing across multiple months)
+- Top SKUs by sewing fail count
+- Top SKUs by repair count (repairs = sewing rework = unplanned downtime)
+- % caught at sewing vs % caught at QC
+
+**Note:** Sewing Manager does NOT care which inspector found the fail, only which Parent SKU had the fail.
+
+**Future Enhancement:** Cross-reference another document to match sewing machine operators with specific reworks/fails.
+
+---
+
+#### QC Manager
+**Focus:** Inspector performance and inspection effectiveness
+
+**Key Responsibilities:**
+- Monitors how many fails are being found at QC (vs sewing)
+- Tracks which inspectors are finding the most fails or reworks
+- Uses discretion to interpret inspector data (knows staff tendencies)
+
+**Key Metrics Needed:**
+- Inspector comparison table (volume, fail rate, repair rate, NCRs, Red Flags)
+- SKU distribution across inspectors (flag >50% concentration)
+- NCRs and Red Flags by inspector
+- % caught at sewing (goal: increase early detection)
+
+**Comparison Fairness:** Compare inspectors within similar SKU mix. PA/SEWING ASST handles different (simpler) work.
+
+---
+
+#### Operations Director
+**Focus:** 30,000 ft view - high-level metrics, minimal detail
+
+**Key Responsibilities:**
+- Strategic decisions on where to invest (training, tooling, process, R&D)
+- Monitors customer risk (NCRs, Red Flags)
+
+**Key Metrics Needed:**
+- Overall pass rate, fail rate, repair rate
+- Touch Rate (repairs + scrap) as COPQ proxy
+- NCR and Red Flag counts
+- Month-over-month trends for: NCRs, total fails, total reworks
+- Top problem SKUs (still important at this level)
+- On-time delivery summary
+
+**Inspector Data:** Only show if there's a >50% SKU concentration issue. Otherwise, focus on SKU-level and overall metrics.
+
+**Future Enhancement:** Cost of quality analysis using separate product cost data.
+
+---
+
+### Repairs Context
+
+- **Who repairs:** Sewing team (not QC)
+- **Impact:** Unplanned downtime, capacity drain
+- **Effort:** Varies from quick fixes (seconds) to significant rework (minutes)
+- **Priority:** Higher priority if order has a sales order reserved against it
+
+---
+
+### Red Flags & NCRs Context
+
+- **Volume:** Rare, typically 2-10 per month
+- **Relationship:** Red Flag always leads to NCR being issued
+- **Purpose:** Escape signal (customer-impacting issue), not diagnostic
+- **NCR:** Only an "X" marker with no root cause detail in this tracker
+
+---
+
+### Visual & UX Guidelines
+
+**Charts:**
+- Should be legible - avoid too many lines or data points too close together
+- Consider weekly rollups if daily data is too noisy
+- Line charts for trends, bar charts for comparisons
+
+**Color Coding:**
+- Green = Pass / Good / On target
+- Red = Fail / Bad / Needs attention
+- Yellow = Warning / Approaching threshold (optional)
+
+**Data Tables:**
+- Apply minimum volume thresholds to avoid misleading rates
+- Sort by most relevant metric for each role
+
+---
+
+### Finalized Decisions
+
+| Topic | Decision |
+|-------|----------|
+| **PA/SEWING ASST** | Exclude from inspector performance comparisons. Still display their volume to evaluate need for additional inspector. |
+| **Former employees** | Exclude from analysis if missing from most recent month. |
+| **Blank Due Date** | Exclude order from on-time calculations, but display count of orders missing due dates as a data quality flag. |
+| **Blank Finished date** | Will never happen - only completed orders are tracked. |
+| **50% SKU concentration** | Parent SKU level. Only flag if Parent SKU has 10+ orders total. |
+| **Month selection** | Support BOTH single month AND multi-month selection. Add presets for Q1-Q4 for both 2025 and 2026, plus Year-to-Date (Jan-current, calendar year). |
+| **Recurring problem SKU** | Parent SKU appearing in top 5 problem SKUs for 3+ of the last 6 months. |
+| **Default month** | Most recent month in the uploaded file. |
+| **Default role** | Production Manager. |
