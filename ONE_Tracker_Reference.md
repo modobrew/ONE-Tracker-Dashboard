@@ -40,11 +40,15 @@ git push
 ```
 Streamlit Cloud auto-redeploys on push.
 
-### Current Project Status: MVP COMPLETE & DEPLOYED
+### Current Project Status: ENHANCED & DEPLOYED (Feb 2026)
 - Streamlit dashboard is live and functional
 - Deployed to Streamlit Community Cloud
-- All 4 role views working (Production Manager, Operations Director, QC Manager, Sewing Manager)
-- File upload, month selection, and SS stream filtering working
+- All 4 role views enhanced with role-specific features:
+  - **Production Manager**: On-time delivery metrics, problem SKUs, insights
+  - **Operations Director**: MoM trend charts, SKU concentration alerts (conditional)
+  - **QC Manager**: Inspector comparisons (PA/SEWING ASST separated), concentration alerts
+  - **Sewing Manager**: Recurring problem SKUs (6-month), repairs by SKU
+- Month presets (Q1-Q4 2025/2026, YTD) in sidebar
 - Parent SKU rollup logic implemented and tested
 - GitHub repo connected for easy updates (push to deploy)
 
@@ -84,15 +88,17 @@ BK, CB, MC, MA, MB, MT, RG, WD, WG, TB, TD, TJ, RD, ML, NG, NP, RT
 3. **False color codes removed** - Removed TN, GR, NV, BL, GY, WT (were never valid)
 4. **Added TB** - Was missing from color codes
 
-### What's Next (Priority Enhancements)
-- On-time delivery metrics (Due Date vs Finished) for Production Manager
-- Recurring problem SKU detection (6-month lookback)
-- Inspector SKU distribution alerts (>50% concentration)
-- Month-over-month trends (NCRs, fails, reworks)
-- Repairs by Parent SKU for Sewing Manager
-- Refined role-based views per Feb 2026 requirements
+### Recently Completed (Feb 2026)
+- ✅ On-time delivery metrics (Due Date vs Finished) for Production Manager
+- ✅ Recurring problem SKU detection (6-month lookback) for Sewing Manager
+- ✅ Inspector SKU distribution alerts (>50% concentration) for QC Manager
+- ✅ Month-over-month trends (NCRs, fails, reworks) for Operations Director
+- ✅ Repairs by Parent SKU for Sewing Manager
+- ✅ Month presets (Q1-Q4 2025/2026, YTD)
+- ✅ PA/SEWING ASST separated from inspector comparisons
+- ✅ Former employee filtering
 
-### Future Enhancements (Lower Priority)
+### Future Enhancements
 - Export functionality (PDF/Excel reports)
 - Date range filtering within months
 - Drill-down into specific SKUs
@@ -595,11 +601,21 @@ ONE_Tracker/
 - [x] Role-based view switching (4 roles)
 - [x] Sewing vs QC fail analysis
 
-### Phase 4: Insights & Polish - PARTIAL
+### Phase 4: Insights & Polish - COMPLETE
 - [x] Automated insights/alerts
-- [ ] Export functionality (PDF/Excel)
 - [x] Basic styling
 - [x] Multi-month comparison (when multiple months selected)
+- [ ] Export functionality (PDF/Excel) - Future
+
+### Phase 5: Role-Based Enhancements (Feb 2026) - COMPLETE
+- [x] On-time delivery metrics (Production Manager)
+- [x] Recurring problem SKU detection - 6 month lookback (Sewing Manager)
+- [x] Inspector SKU concentration alerts (QC Manager)
+- [x] Month-over-month trend charts (Operations Director)
+- [x] Month presets (Q1-Q4, YTD)
+- [x] PA/SEWING ASST separated from comparisons
+- [x] Former employee filtering
+- [x] Repairs by Parent SKU (Sewing Manager)
 
 ---
 
@@ -789,11 +805,12 @@ This section captures requirements gathered from stakeholder discussion for impr
 
 | Topic | Decision |
 |-------|----------|
-| **PA/SEWING ASST** | Exclude from inspector performance comparisons. Still display their volume to evaluate need for additional inspector. |
+| **PA/SEWING ASST** | Exclude from inspector performance comparisons. Still display their volume to evaluate need for additional inspector. Also excluded from SKU concentration alerts. |
+| **BRYCE (QC Manager)** | Excluded from SKU concentration alerts - intentionally focuses on BU items. |
 | **Former employees** | Exclude from analysis if missing from most recent month. |
 | **Blank Due Date** | Exclude order from on-time calculations, but display count of orders missing due dates as a data quality flag. |
 | **Blank Finished date** | Will never happen - only completed orders are tracked. |
-| **50% SKU concentration** | Parent SKU level. Only flag if Parent SKU has 10+ orders total. |
+| **50% SKU concentration** | Parent SKU level. Only flag if Parent SKU has 10+ orders total. Excludes BRYCE and PA/SEWING ASST. |
 | **Month selection** | Support BOTH single month AND multi-month selection. Add presets for Q1-Q4 for both 2025 and 2026, plus Year-to-Date (Jan-current, calendar year). |
 | **Recurring problem SKU** | Parent SKU appearing in top 5 problem SKUs for 3+ of the last 6 months. |
 | **Default month** | Most recent month in the uploaded file. |
